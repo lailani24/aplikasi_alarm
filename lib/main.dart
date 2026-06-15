@@ -10,6 +10,9 @@ import 'splash_screen.dart';
 import 'alarm_alert_screen.dart';
 import 'firebase_options.dart';
 
+// Global: apakah app di-launch karena alarm berbunyi (dari lock screen)
+AlarmSettings? _ringingAlarmOnLaunch;
+
 Future<void> isi100KataKerjaBahasaIndonesia() async {
   final CollectionReference wordsCollection =
       FirebaseFirestore.instance.collection('words_collection');
@@ -33,16 +36,16 @@ Future<void> isi100KataKerjaBahasaIndonesia() async {
   try {
     var snapshot = await wordsCollection.limit(1).get();
     if (snapshot.docs.isEmpty) {
-      print("Sedang memproses upload 100 kata kerja ke Firebase...");
+      debugPrint("Sedang memproses upload 100 kata kerja ke Firebase...");
       for (String kata in daftarKataKerja) {
         await wordsCollection.add({'word': kata.toUpperCase()});
       }
-      print("100 Kata Kerja Berhasil Ditambahkan ke Firebase Console!");
+      debugPrint("100 Kata Kerja Berhasil Ditambahkan ke Firebase Console!");
     } else {
-      print("Koleksi kata kerja sudah ada di Firestore.");
+      debugPrint("Koleksi kata kerja sudah ada di Firestore.");
     }
   } catch (e) {
-    print("Gagal memeriksa atau mengupload ke Firebase: $e");
+    debugPrint("Gagal memeriksa atau mengupload ke Firebase: $e");
   }
 }
 
@@ -57,6 +60,13 @@ void main() async {
   // Inisialisasi package alarm (WAJIB sebelum set/listen alarm)
   await Alarm.init();
 
+  // Cek apakah ada alarm yang sedang berbunyi saat app di-launch
+  // (misalnya dari full-screen intent saat HP terkunci)
+  final ringingAlarms = await Alarm.getAlarms();
+  if (ringingAlarms.isNotEmpty) {
+    _ringingAlarmOnLaunch = ringingAlarms.first;
+  }
+
   await isi100KataKerjaBahasaIndonesia();
 
   runApp(const MyApp());
@@ -67,10 +77,90 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Jika app di-launch karena alarm berbunyi (dari lock screen),
+    // langsung tampilkan AlarmAlertScreen tanpa melewati SplashScreen
+    final alarmOnLaunch = _ringingAlarmOnLaunch;
+
+    if (alarmOnLaunch != null) {
+      // Reset flag agar tidak terpakai lagi
+      _ringingAlarmOnLaunch = null;
+
+      return MaterialApp(
+        debugShowCheckedModeBanner: false,
+        theme: ThemeData(fontFamily: 'Inter'),
+        home: _AlarmLaunchWrapper(alarmSettings: alarmOnLaunch),
+      );
+    }
+
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       theme: ThemeData(fontFamily: 'Inter'),
       home: const SplashScreen(),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Wrapper widget: langsung tampilkan AlarmAlertScreen saat launch dari alarm
+// Setelah misi selesai, navigasi ke HomeScreen
+// ─────────────────────────────────────────────────────────────────────────────
+class _AlarmLaunchWrapper extends StatefulWidget {
+  final AlarmSettings alarmSettings;
+  const _AlarmLaunchWrapper({required this.alarmSettings});
+
+  @override
+  State<_AlarmLaunchWrapper> createState() => _AlarmLaunchWrapperState();
+}
+
+class _AlarmLaunchWrapperState extends State<_AlarmLaunchWrapper> {
+  @override
+  void initState() {
+    super.initState();
+    // Mulai getaran dan navigasi ke alarm screen setelah frame pertama
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _showAlarmScreen();
+    });
+  }
+
+  Future<void> _showAlarmScreen() async {
+    // Mulai getaran periodik
+    await AlarmService().startVibration();
+
+    // Ambil preferensi alarm
+    final soundFileName = await AlarmService.getSavedSound();
+    final challengeCount = await AlarmService.getSavedChallengeCount();
+
+    if (!mounted) return;
+
+    // Navigasi ke AlarmAlertScreen
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => AlarmAlertScreen(
+          selectedSound: soundFileName,
+          targetMisi: challengeCount,
+          alarmId: widget.alarmSettings.id,
+          launchedFromLockScreen: true,
+        ),
+      ),
+    );
+
+    // Setelah misi selesai, ganti ke HomeScreen
+    if (!mounted) return;
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(builder: (context) => const HomeScreen()),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // Tampilan loading sementara sebelum AlarmAlertScreen muncul
+    return const Scaffold(
+      backgroundColor: Color(0xFFFFF2DF),
+      body: Center(
+        child: CircularProgressIndicator(color: Color(0xFFE07A5F)),
+      ),
     );
   }
 }
@@ -91,7 +181,7 @@ class _HomeScreenState extends State<HomeScreen> {
   int currentChallengeCount = 3;
 
   // Subscription ke stream alarm package
-  StreamSubscription<AlarmSettings>? _alarmSubscription;
+  StreamSubscription<dynamic>? _alarmSubscription;
 
   // Guard: mencegah navigasi ganda ke AlarmAlertScreen
   bool _isHandlingAlarm = false;
@@ -117,8 +207,12 @@ class _HomeScreenState extends State<HomeScreen> {
     _checkRingingOnStart();
 
     // Listen ke alarm yang masuk saat app sedang berjalan (foreground / background resume)
-    _alarmSubscription = Alarm.ringStream.stream.listen((alarmSettings) {
-      _handleAlarmTriggered(alarmSettings);
+    _alarmSubscription = Alarm.ringing.listen((alarmSet) {
+      if (alarmSet.alarms.isNotEmpty) {
+        for (final alarm in alarmSet.alarms) {
+          _handleAlarmTriggered(alarm);
+        }
+      }
     });
   }
 
@@ -196,7 +290,7 @@ class _HomeScreenState extends State<HomeScreen> {
           await _firestoreAlarms.add(result);
         }
       } catch (e) {
-        print("Gagal menyimpan data ke Firebase: $e");
+        debugPrint("Gagal menyimpan data ke Firebase: $e");
       }
     }
   }
@@ -218,10 +312,10 @@ class _HomeScreenState extends State<HomeScreen> {
               try {
                 await AlarmService.cancelAlarm(alarmId);
                 await _firestoreAlarms.doc(docId).delete();
-                if (!mounted) return;
+                if (!context.mounted) return;
                 Navigator.pop(context);
               } catch (e) {
-                print("Gagal menghapus alarm: $e");
+                debugPrint("Gagal menghapus alarm: $e");
               }
             },
             child: const Text("Hapus", style: TextStyle(color: Colors.red)),
@@ -469,13 +563,21 @@ class _AddAlarmScreenState extends State<AddAlarmScreen> {
     final TimeOfDay? picked = await showTimePicker(
       context: context,
       initialTime: selectedTime,
+      initialEntryMode: TimePickerEntryMode.input,
       builder: (context, child) {
         return Theme(
           data: ThemeData.light().copyWith(
             colorScheme:
                 const ColorScheme.light(primary: Color(0xFFE07A5F)),
           ),
-          child: child!,
+          child: MediaQuery(
+            data: MediaQuery.of(context).copyWith(
+              textScaler: const TextScaler.linear(1.0),
+            ),
+            child: SingleChildScrollView(
+              child: child!,
+            ),
+          ),
         );
       },
     );
@@ -575,7 +677,7 @@ class _AddAlarmScreenState extends State<AddAlarmScreen> {
                       style: TextStyle(fontWeight: FontWeight.bold)),
                   trailing: Switch(
                     value: isVibrate,
-                    activeColor: const Color(0xFFE07A5F),
+                    activeThumbColor: const Color(0xFFE07A5F),
                     onChanged: (val) => setState(() => isVibrate = val),
                   ),
                 ),
@@ -627,7 +729,7 @@ class _AddAlarmScreenState extends State<AddAlarmScreen> {
                     challengeCount: selectedChallengeCount,
                   );
 
-                  if (!mounted) return;
+                  if (!context.mounted) return;
                   Navigator.pop(context, {
                     "time": formattedTime,
                     "isActive": true,
@@ -659,30 +761,27 @@ class _AddAlarmScreenState extends State<AddAlarmScreen> {
             borderRadius: BorderRadius.circular(20)),
         title: const Text("Select Repeat",
             style: TextStyle(fontWeight: FontWeight.bold)),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            RadioListTile<String>(
-              title: const Text("Never"),
-              value: 'Never',
-              groupValue: selectedRepeat,
-              activeColor: const Color(0xFFE07A5F),
-              onChanged: (v) {
-                setState(() => selectedRepeat = v!);
-                Navigator.pop(context);
-              },
-            ),
-            RadioListTile<String>(
-              title: const Text("Everyday"),
-              value: 'Everyday',
-              groupValue: selectedRepeat,
-              activeColor: const Color(0xFFE07A5F),
-              onChanged: (v) {
-                setState(() => selectedRepeat = v!);
-                Navigator.pop(context);
-              },
-            ),
-          ],
+        content: RadioGroup<String>(
+          groupValue: selectedRepeat,
+          onChanged: (v) {
+            setState(() => selectedRepeat = v!);
+            Navigator.pop(context);
+          },
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              RadioListTile<String>(
+                title: const Text("Never"),
+                value: 'Never',
+                activeColor: const Color(0xFFE07A5F),
+              ),
+              RadioListTile<String>(
+                title: const Text("Everyday"),
+                value: 'Everyday',
+                activeColor: const Color(0xFFE07A5F),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -694,30 +793,27 @@ class _AddAlarmScreenState extends State<AddAlarmScreen> {
       builder: (context) => AlertDialog(
         backgroundColor: const Color(0xFFFFF2DF),
         title: const Text("Select Sound"),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            RadioListTile<String>(
-              title: const Text("Sound 1"),
-              value: 'sound1.mp3',
-              groupValue: selectedSound,
-              activeColor: const Color(0xFFE07A5F),
-              onChanged: (v) {
-                setState(() => selectedSound = v!);
-                Navigator.pop(context);
-              },
-            ),
-            RadioListTile<String>(
-              title: const Text("Sound 2"),
-              value: 'sound2.mp3',
-              groupValue: selectedSound,
-              activeColor: const Color(0xFFE07A5F),
-              onChanged: (v) {
-                setState(() => selectedSound = v!);
-                Navigator.pop(context);
-              },
-            ),
-          ],
+        content: RadioGroup<String>(
+          groupValue: selectedSound,
+          onChanged: (v) {
+            setState(() => selectedSound = v!);
+            Navigator.pop(context);
+          },
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              RadioListTile<String>(
+                title: const Text("Sound 1"),
+                value: 'sound1.mp3',
+                activeColor: const Color(0xFFE07A5F),
+              ),
+              RadioListTile<String>(
+                title: const Text("Sound 2"),
+                value: 'sound2.mp3',
+                activeColor: const Color(0xFFE07A5F),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -732,30 +828,27 @@ class _AddAlarmScreenState extends State<AddAlarmScreen> {
             borderRadius: BorderRadius.circular(20)),
         title: const Text("Jumlah Tantangan",
             style: TextStyle(fontWeight: FontWeight.bold)),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            RadioListTile<int>(
-              title: const Text("3 Misi"),
-              value: 3,
-              groupValue: selectedChallengeCount,
-              activeColor: const Color(0xFFE07A5F),
-              onChanged: (v) {
-                setState(() => selectedChallengeCount = v!);
-                Navigator.pop(context);
-              },
-            ),
-            RadioListTile<int>(
-              title: const Text("5 Misi"),
-              value: 5,
-              groupValue: selectedChallengeCount,
-              activeColor: const Color(0xFFE07A5F),
-              onChanged: (v) {
-                setState(() => selectedChallengeCount = v!);
-                Navigator.pop(context);
-              },
-            ),
-          ],
+        content: RadioGroup<int>(
+          groupValue: selectedChallengeCount,
+          onChanged: (v) {
+            setState(() => selectedChallengeCount = v!);
+            Navigator.pop(context);
+          },
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              RadioListTile<int>(
+                title: const Text("3 Misi"),
+                value: 3,
+                activeColor: const Color(0xFFE07A5F),
+              ),
+              RadioListTile<int>(
+                title: const Text("5 Misi"),
+                value: 5,
+                activeColor: const Color(0xFFE07A5F),
+              ),
+            ],
+          ),
         ),
       ),
     );

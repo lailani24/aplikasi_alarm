@@ -2,6 +2,7 @@ import 'package:alarm/alarm.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vibration/vibration.dart';
 import 'dart:async';
+import 'package:flutter/foundation.dart';
 
 class AlarmService {
   static final AlarmService _instance = AlarmService._internal();
@@ -117,7 +118,7 @@ class AlarmService {
         }
       }
     } catch (e) {
-      print('Gagal menghentikan alarm: $e');
+      debugPrint('Gagal menghentikan alarm: $e');
     }
   }
 }

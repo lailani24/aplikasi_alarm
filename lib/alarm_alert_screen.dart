@@ -1,4 +1,3 @@
-import 'package:aplikasi_alarm/alarm_service.dart';
 import 'package:flutter/material.dart';
 import 'mission_screen.dart';
 
@@ -6,12 +5,14 @@ class AlarmAlertScreen extends StatefulWidget {
   final String selectedSound;
   final int targetMisi;
   final int alarmId; // ID alarm dari package alarm
+  final bool launchedFromLockScreen; // Apakah langsung dari lock screen
 
   const AlarmAlertScreen({
     super.key,
     required this.selectedSound,
     this.targetMisi = 3,
     required this.alarmId,
+    this.launchedFromLockScreen = false,
   });
 
   @override
@@ -64,12 +65,13 @@ class _AlarmAlertScreenState extends State<AlarmAlertScreen> {
                       borderRadius: BorderRadius.circular(20)),
                 ),
                 onPressed: () {
-                  Navigator.pushReplacement(
+                  Navigator.push(
                     context,
                     MaterialPageRoute(
                       builder: (context) => MissionScreen(
                         targetMisi: widget.targetMisi,
                         alarmId: widget.alarmId,
+                        launchedFromLockScreen: widget.launchedFromLockScreen,
                       ),
                     ),
                   );

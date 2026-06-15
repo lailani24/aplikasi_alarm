@@ -6,11 +6,13 @@ import 'alarm_service.dart';
 class MissionScreen extends StatefulWidget {
   final int targetMisi;
   final int alarmId; // Dibutuhkan untuk stop alarm package
+  final bool launchedFromLockScreen; // Apakah dari lock screen
 
   const MissionScreen({
     super.key,
     required this.targetMisi,
     required this.alarmId,
+    this.launchedFromLockScreen = false,
   });
 
   @override
@@ -127,8 +129,7 @@ class _MissionScreenState extends State<MissionScreen> {
             actions: [
               TextButton(
                 onPressed: () {
-                  Navigator.of(context).pop();
-                  // Kembali ke HomeScreen (first route)
+                  Navigator.of(context).pop(); // tutup dialog
                   Navigator.of(context).popUntil((route) => route.isFirst);
                 },
                 child: const Text(
