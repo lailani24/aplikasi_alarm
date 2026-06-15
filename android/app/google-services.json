@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "758332049533",
+    "project_id": "alarmku-94cea",
+    "storage_bucket": "alarmku-94cea.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:758332049533:android:f1d9b9d8e89b80a5620914",
+        "android_client_info": {
+          "package_name": "com.example.aplikasi_alarm"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBKitFHRrc6-9Fh3y06ArN53EHBvxlO9HM"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
